@@ -21,9 +21,8 @@ Automated Twitch account creator, stream watcher, and drop farmer with Kasada by
 | Requirement | Where to get |
 |------------|-------------|
 | Discord bot token | https://discord.com/developers/applications |
-| Twitch API keys | https://dev.twitch.tv/console/apps |
 | Gmail + App Password | https://myaccount.google.com/apppasswords |
-| Proxy (optional) | Any HTTP proxy — test with `!testproxy` first |
+| Smartproxy (optional) | Residential proxy with sticky sessions — format: `http://smart-user:pass@host:port` |
 
 ---
 
@@ -222,10 +221,18 @@ Run every 2-3 hours.
 
 ## Proxy
 
-### Testing a Proxy
+### Format (Smartproxy sticky session)
 
 ```
-!testproxy http://user:pass@host:port
+PROXY_URL=http://smart-user:pass@gate.smartproxy.com:10000
+```
+
+The `smart-` prefix keeps the same IP for the entire signup session (required — Kasada detects IP changes mid-session).
+
+### Testing
+
+```
+!testproxy http://smart-user:pass@gate.smartproxy.com:10000
 ```
 
 - **PASSED** → safe to use
@@ -233,9 +240,9 @@ Run every 2-3 hours.
 
 ### Notes
 
-- Server IP often works without a proxy
-- Only add a proxy if your IP gets flagged by Kasada
-- Static ISP proxies from Proxy-Cheap are NOT supported (Kasada blocks them)
+- Your server IP often works without a proxy — only add one if Kasada blocks your IP
+- Static ISP proxies are NOT supported (Kasada blocks them)
+- Rotating proxies without sticky sessions will fail
 
 ---
 
@@ -243,7 +250,7 @@ Run every 2-3 hours.
 
 | Problem | Solution |
 |---------|----------|
-| Kasada blocks Chrome | Wait 3 hours, test again with `!testproxy` |
+| Kasada blocks signup | Wait 3 hours, test again with `!testproxy` |
 | Cookies expired | Run `!checkcookies all` to refresh |
 | Account banned | Run `!checkbanned all` to remove banned accounts |
 | Drops not claiming | Make sure `!watch all` is running first |
