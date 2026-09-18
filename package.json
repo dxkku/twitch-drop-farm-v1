@@ -1,0 +1,31 @@
+{
+  "name": "account-generator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Account generator with Discord notifications",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.6",
+    "imapflow": "^1.4.1",
+    "mailparser": "^3.9.11",
+    "nodemailer": "^9.0.1",
+    "puppeteer": "^25.1.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "puppeteer-with-fingerprints": "^2.3.5",
+    "smtp-server": "^3.19.1",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
+  },
+  "allowScripts": {
+    "ssh2@1.17.0": true
+  }
+}

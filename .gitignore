@@ -1,0 +1,10 @@
+node_modules/
+.env
+data/
+tmp_profiles/
+avatars/
+picdrops/
+watch_accounts/
+emails/
+*.rar
+.claude/
