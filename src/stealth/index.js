@@ -131,9 +131,23 @@ async function launch(opts = {}) {
   const pages      = await browser.pages();
   const twitchPage = pages.find(p => p.url().includes('twitch.tv')) || pages[0];
 
-  // Do NOT call applyStealthToPage here — changing UA after KPSDK completes
-  // is fine, but the old working version never did it inside launch().
-  // twitchBot.js can call applyStealthToPage separately if needed.
+  // Spoof WebGL renderer on all future navigations — prevents Twitch "browser not
+  // currently supported" detection caused by SwiftShader being identified as a
+  // non-hardware GPU renderer via WebGLRenderingContext.getParameter(37446).
+  await twitchPage.evaluateOnNewDocument(() => {
+    const spoof = (proto) => {
+      try {
+        const orig = proto.getParameter;
+        proto.getParameter = function(p) {
+          if (p === 37445) return 'Google Inc. (NVIDIA)';
+          if (p === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)';
+          return Reflect.apply(orig, this, arguments);
+        };
+      } catch(e) {}
+    };
+    spoof(WebGLRenderingContext.prototype);
+    try { spoof(WebGL2RenderingContext.prototype); } catch(e) {}
+  }).catch(() => {});
 
   return { browser, page: twitchPage, fingerprint: fp, chromeProc, debugPort: port };
 }

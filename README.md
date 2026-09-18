@@ -1,5 +1,9 @@
 # Twitch Drop Farm Bot
 
+> Built by **dxkku** and **Claude** :3
+>
+> 💬 **[Join the Discord](https://discord.gg/kq7Rh3AKZH)**
+
 Automated Twitch account creator, stream watcher, and drop farmer with Kasada bypass.
 
 ---
