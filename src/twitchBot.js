@@ -28,15 +28,6 @@ function getSignupProxyMode() {
 // User-Agent will be derived from the actual Chrome binary at runtime
 // to avoid version mismatches that trigger 'browser not supported'.
 
-// Import puppeteer-with-fingerprints instead of stealth plugin
-let plugin = null;
-try {
-  const pwf = require('puppeteer-with-fingerprints');
-  plugin = pwf.plugin;
-} catch (e) {
-  console.error("DEBUG Failed to load puppeteer-with-fingerprints:", e.message);
-}
-
 function randomString(length, chars) {
   chars = chars || 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let out = '';
@@ -166,27 +157,6 @@ async function puppeteerModeSignup(password) {
     });
     browser = _browser;
     page    = _page;
-
-    const consoleMsgs = [];
-
-    // ── Temporary diagnostic: capture console errors + KPSDK /fp request status ──
-    // (remove after diagnosis — these DO activate CDP domains)
-    page.on('console', msg => {
-      if (msg.type() === 'error') console.log('DEBUG [page-error]', msg.text().slice(0, 200));
-    });
-    page.on('requestfinished', req => {
-      const u = req.url();
-      if (u.includes('kpsdk') || u.includes('k.twitchcdn') || u.includes('/fp?')) {
-        const r = req.response();
-        console.log(`DEBUG [kpsdk-net] ${req.method()} ${u.slice(0, 120)} → ${r ? r.status() : 'no-resp'}`);
-      }
-    });
-    page.on('requestfailed', req => {
-      const u = req.url();
-      if (u.includes('kpsdk') || u.includes('k.twitchcdn') || u.includes('/fp?')) {
-        console.log(`DEBUG [kpsdk-net-FAIL] ${u.slice(0, 120)} — ${req.failure()?.errorText}`);
-      }
-    });
 
     // Chrome already navigated to twitch.tv during launch — wait for it to settle
     console.log('DEBUG waiting for twitch.tv to fully settle after late-CDP connect...');
@@ -529,13 +499,13 @@ async function puppeteerModeSignup(password) {
 
     if (formStillOpen && hasErrorAlert) {
       console.log('DEBUG [createTwitchAccount] Kasada block — Browser not supported');
-      return { success: false, username, email: twitchEmail, password: twitchPassword, error: 'Browser not supported', consoleMsgs, domain: emailDomain };
+      return { success: false, username, email: twitchEmail, password: twitchPassword, error: 'Browser not supported', domain: emailDomain };
     }
 
     if (formStillOpen && hasAnyAlert) {
       const alertSummary = alertTexts.join('; ').slice(0, 200);
       console.log('DEBUG [createTwitchAccount] Form validation error:', alertSummary);
-      return { success: false, username, email: twitchEmail, password: twitchPassword, error: 'Form error: ' + alertSummary, consoleMsgs };
+      return { success: false, username, email: twitchEmail, password: twitchPassword, error: 'Form error: ' + alertSummary };
     }
 
     if (formStillOpen) {

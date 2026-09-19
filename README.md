@@ -8,6 +8,12 @@ Automated Twitch account creator, stream watcher, and drop farmer with Kasada by
 
 ---
 
+> **⚠️ REQUIREMENT — Google Chrome must be installed**
+> The bot launches real Chrome to bypass Kasada. Without it, nothing works.
+> **[Download Google Chrome](https://www.google.com/chrome/)**
+
+---
+
 ## Features
 
 - **Account Creation** — Bypasses Kasada anti-bot with real Chrome (late-CDP pattern)
@@ -24,6 +30,7 @@ Automated Twitch account creator, stream watcher, and drop farmer with Kasada by
 
 | Requirement | Where to get |
 |------------|-------------|
+| **Google Chrome** | https://www.google.com/chrome/ — **required**, the bot launches Chrome to bypass Kasada |
 | Discord bot token | https://discord.com/developers/applications |
 | Gmail + App Password | https://myaccount.google.com/apppasswords |
 | Smartproxy (optional) | Residential proxy with sticky sessions — format: `http://smart-user:pass@host:port` |

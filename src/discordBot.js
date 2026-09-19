@@ -1129,11 +1129,11 @@ function start(token) {
                   env: { ...process.env },
                 });
               } else {
-                const pwf = require('puppeteer-with-fingerprints');
-                const plugin = pwf.plugin;
-                const fingerprints = await plugin.fetch('', { tags: ['Microsoft Windows', 'Chrome'] });
-                plugin.useFingerprint(fingerprints);
-                browser = await plugin.launch({ args: launchArgs });
+                browser = await puppeteer.launch({
+                  headless: true,
+                  args: launchArgs.concat(['--user-data-dir=' + tmpDir]),
+                  env: { ...process.env },
+                });
               }
               const page = await browser.newPage();
 
@@ -2868,8 +2868,9 @@ function start(token) {
 
               const isBanned = pageText.includes('violation of twitch') ||
                                pageText.includes('community guidelines or terms of service');
-              const isDeleted = pageText.includes('time machine') ||
-                                pageText.includes('content is unavailable');
+              // Twitch 404 phrase: "Sorry. Unless you've got a time machine, that content is unavailable."
+              // Require BOTH words together — a stream title can contain "time machine" on its own.
+              const isDeleted = pageText.includes('time machine') && pageText.includes('content is unavailable');
 
               if (isBanned) {
                 console.log('DEBUG [checkbanned] ' + user + ': BANNED — community guidelines');
@@ -2909,10 +2910,18 @@ function start(token) {
                 running.splice(running.indexOf(p), 1);
                 const user = acc.twitchData?.username || acc.username || acc.id;
                 if (result === 'banned') {
-                  banned++;
-                  delete accounts[acc.id];
-                  saveAccounts();
-                  console.log(`DEBUG [checkbanned] ${user}: BANNED — deleted from accounts.json`);
+                  // Confirm before deleting — one retry after 5s rules out transient Twitch errors
+                  await sleepMs(5000);
+                  const confirm = await checkBanOne(acc, idx + 10000).catch(() => 'error');
+                  if (confirm !== 'banned') {
+                    console.log(`DEBUG [checkbanned] ${user}: 1st check said banned but retry says ${confirm} — keeping account`);
+                    errors++;
+                  } else {
+                    banned++;
+                    delete accounts[acc.id];
+                    saveAccounts();
+                    console.log(`DEBUG [checkbanned] ${user}: BANNED (confirmed x2) — deleted from accounts.json`);
+                  }
                 } else if (result === 'alive') {
                   alive++;
                 } else {
