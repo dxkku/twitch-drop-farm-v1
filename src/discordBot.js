@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { accounts, saveAccounts, findByUsername, getLinkedAccounts } = require('./state');
 const { watchStream, stopWatching, getWatchers, isWatching, setOnWatcherStop, launching } = require('./watcher');
+const { startApiWatching, stopApiWatching, stopAllApiWatching, getApiWatchers, isApiWatching } = require('./apiWatcher');
 const { startViewing, stopViewing, getStatus: getViewerStatus, PROXY_SITES } = require('./viewerBot');
 const { startLocalProxy, resetLocalProxy } = require('./localProxy');
 const twitchApi = require('./twitchApi');
@@ -929,6 +930,114 @@ function start(token) {
             rotationStreamer = null;
             await msg.channel.send(`⏹️ Stopped all ${watchers.length} watchers. Auto-replace OFF.`);
           }
+          break;
+        }
+
+        // ============================
+        // !apiwatch <streamer> [all|username] — API-based watching (no browser)
+        // !apiwatch rocketleague          → start all eligible accounts
+        // !apiwatch rocketleague username → start one account
+        // ============================
+        case 'apiwatch': {
+          const apStreamer = args[0];
+          const apTarget   = args[1]; // optional: specific username
+
+          if (!apStreamer) return msg.channel.send('Usage: `!apiwatch <streamer> [username]`');
+
+          const apMsg = await msg.channel.send({ embeds: [
+            new EmbedBuilder().setColor(0xFFAA00).setTitle('🌐 API Watch').setDescription(`Starting API watchers on **${apStreamer}**...`).setTimestamp()
+          ]});
+
+          if (apTarget) {
+            // Single account
+            const acc = findByUsername(apTarget);
+            if (!acc) return apMsg.edit({ embeds: [new EmbedBuilder().setColor(0xFF0000).setTitle('❌ Not found').setDescription(`Account \`${apTarget}\` not found.`)] });
+            const res = await startApiWatching(acc.id, apStreamer);
+            const statusLine = res.started
+              ? `✅ \`${apTarget}\` watching **${apStreamer}** via API`
+              : `❌ \`${apTarget}\` failed: ${res.reason}`;
+            await apMsg.edit({ embeds: [new EmbedBuilder().setColor(res.started ? 0x00FF00 : 0xFF0000).setTitle('🌐 API Watch').setDescription(statusLine).setTimestamp()] });
+          } else {
+            // All eligible accounts (have cookies, not already watching)
+            const eligible = getLinkedAccounts().filter(a =>
+              a.cookies && a.cookies.length > 6 &&
+              !isWatching(a.id) && !isApiWatching(a.id)
+            );
+
+            if (eligible.length === 0) {
+              return apMsg.edit({ embeds: [new EmbedBuilder().setColor(0xFF0000).setTitle('🌐 API Watch').setDescription('No eligible accounts (need cookies, not already watching).').setTimestamp()] });
+            }
+
+            let apSuccess = 0, apFailed = 0, apSkipped = 0;
+            const BATCH = 20; // launch in batches to avoid hammering GQL
+
+            await apMsg.edit({ embeds: [new EmbedBuilder().setColor(0xFFAA00).setTitle('🌐 API Watch').setDescription(`Starting **${eligible.length}** accounts in batches of ${BATCH}...`).setTimestamp()] });
+
+            for (let i = 0; i < eligible.length; i += BATCH) {
+              const batch = eligible.slice(i, i + BATCH);
+              await Promise.all(batch.map(async (acc) => {
+                const res = await startApiWatching(acc.id, apStreamer);
+                if (res.started) apSuccess++;
+                else if (res.reason === 'stream_offline') apSkipped++;
+                else apFailed++;
+              }));
+              // Small delay between batches
+              if (i + BATCH < eligible.length) await new Promise(r => setTimeout(r, 2000));
+            }
+
+            await apMsg.edit({ embeds: [
+              new EmbedBuilder()
+                .setColor(apSuccess > 0 ? 0x00FF00 : 0xFF0000)
+                .setTitle('🌐 API Watch — Done')
+                .setDescription(
+                  `✅ **${apSuccess}** started\n` +
+                  `❌ **${apFailed}** failed (expired token / no auth)\n` +
+                  `⏭️ **${apSkipped}** skipped (stream offline)`
+                )
+                .setFooter({ text: `Streamer: ${apStreamer} • No browsers used` })
+                .setTimestamp()
+            ]});
+          }
+          break;
+        }
+
+        // ============================
+        // !stopapiwatch [username] — Stop API watchers
+        // ============================
+        case 'stopapiwatch': {
+          const stopApTarget = args[0];
+          if (stopApTarget) {
+            const acc = findByUsername(stopApTarget);
+            if (!acc) return msg.channel.send(`Account \`${stopApTarget}\` not found.`);
+            const stopped = stopApiWatching(acc.id);
+            await msg.channel.send(stopped ? `⏹️ \`${stopApTarget}\` API watcher stopped.` : `\`${stopApTarget}\` was not API watching.`);
+          } else {
+            const n = stopAllApiWatching();
+            await msg.channel.send(`⏹️ Stopped **${n}** API watchers.`);
+          }
+          break;
+        }
+
+        // ============================
+        // !apiwatchers — Show active API watchers
+        // ============================
+        case 'apiwatchers': {
+          const aw = getApiWatchers();
+          const entries = Object.values(aw);
+          if (entries.length === 0) return msg.channel.send('No active API watchers.');
+          const lines = entries.map(w => {
+            const uptime = Math.round((Date.now() - w.startedAt) / 60000);
+            return `🌐 \`${w.username}\` → ${w.streamer} (${uptime}m, ${w.minutesSent} events sent)`;
+          });
+          // Discord message limit: split if needed
+          const chunks = [];
+          let cur = `**API Watchers (${entries.length})**\n`;
+          for (const line of lines) {
+            if (cur.length + line.length + 1 > 1900) { chunks.push(cur); cur = ''; }
+            cur += line + '\n';
+          }
+          if (cur) chunks.push(cur);
+          for (const chunk of chunks) await msg.channel.send(chunk);
           break;
         }
 
