@@ -3442,14 +3442,20 @@ function start(token) {
                 .setTitle('📺 Watching & Stream Farming')
                 .setDescription('Control which streams your accounts watch to farm drops.')
                 .addFields(
+                  { name: '`!apiwatch <streamer> [username]`',
+                    value: '⭐ **Recommended** — Watches via Twitch API with zero Chrome windows.\nRuns all accounts at once using ~250MB RAM total.\n> 📌 `!apiwatch alphakep` — start all accounts on that streamer' },
+                  { name: '`!stopapiwatch [username]`',
+                    value: 'Stops API watching. Leave blank to stop all, or specify one account.\n> 📌 `!stopapiwatch` or `!stopapiwatch Janenuzima9521`' },
+                  { name: '`!apiwatchers`',
+                    value: 'Shows all active API watchers with uptime and minutes sent.' },
                   { name: '`!watch <streamer> [parallel|username]`',
-                    value: 'Starts watching a streamer. Auto-rotates accounts when one stops.\n• **parallel** — Accounts watching at the same time\n• **username** — Watch with one specific account only\n> 📌 `!watch ninja 10` = 10 accounts watching ninja at once' },
+                    value: 'Browser-based watcher (legacy). Limited to ~10-15 accounts at once due to RAM.\n• **parallel** — Accounts watching at the same time\n• **username** — Watch with one specific account only\n> 📌 `!watch ninja 10` = 10 accounts watching ninja at once' },
                   { name: '`!stopwatch [username]`',
-                    value: 'Stops watching. Leave blank to stop all, or specify one account.\n> 📌 `!stopwatch` or `!stopwatch Janenuzima9521`' },
+                    value: 'Stops browser watching. Leave blank to stop all, or specify one account.\n> 📌 `!stopwatch` or `!stopwatch Janenuzima9521`' },
                   { name: '`!stoprotation`',
                     value: 'Disables auto-replace — when an account stops, no new one takes over.' },
                   { name: '`!watchers`',
-                    value: 'Shows all active watchers with streamer, account and drop count.' },
+                    value: 'Shows all active browser watchers with streamer, account and drop count.' },
                 )
                 .setFooter({ text: '← Click 🏠 Home to go back' }),
               rows: () => [new ActionRowBuilder().addComponents(
