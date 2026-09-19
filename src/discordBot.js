@@ -2843,7 +2843,7 @@ function start(token) {
 
               // Navigate directly to the channel page — ban messages appear to anyone
               const channelUrl = 'https://www.twitch.tv/' + encodeURIComponent(username);
-              await page.goto(channelUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+              await page.goto(channelUrl, { waitUntil: 'domcontentloaded', timeout: 40000 });
 
               // Wait for channel-page-specific content to render
               let pageLoaded = false;
