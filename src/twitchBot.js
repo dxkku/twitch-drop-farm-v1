@@ -664,10 +664,24 @@ async function puppeteerModeSignup(password) {
   } finally {
     try { if (browser) browser.close(); } catch(e) {}
     // DO NOT close proxy — shared across retries
-    // Delete only THIS account's own profile — do NOT scan and delete other profiles
-    // since parallel account creations share tmp_profiles/ and would delete each other's
-    // active directories, causing incomplete cookies on concurrent signups.
+    // 1. Delete this account's own profile immediately.
     try { require('fs').rmSync(tmpDir, { recursive: true, force: true }); } catch(e) {}
+    // 2. Age-based sweep: remove any profile older than 30 min.
+    //    Active signups finish in <5 min so 30 min is always safe — we never
+    //    touch a live directory even with many parallel accounts running.
+    try {
+      const fs = require('fs');
+      const profileDir = path.join(__dirname, '../tmp_profiles');
+      const cutoff = Date.now() - 30 * 60 * 1000;
+      for (const name of fs.readdirSync(profileDir)) {
+        if (!name.startsWith('profile_') && !name.startsWith('ban_') && !name.startsWith('drops_')) continue;
+        const full = path.join(profileDir, name);
+        try {
+          const stat = fs.statSync(full);
+          if (stat.mtimeMs < cutoff) fs.rmSync(full, { recursive: true, force: true });
+        } catch(e) {}
+      }
+    } catch(e) {}
   }
 }
 

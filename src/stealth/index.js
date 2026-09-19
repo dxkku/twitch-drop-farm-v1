@@ -133,6 +133,8 @@ async function launch(opts = {}) {
     '--ignore-gpu-blocklist',
     '--use-gl=angle',
     '--enable-gpu-rasterization',
+    '--disk-cache-size=1',
+    '--media-cache-size=1',
     `--window-size=${opts.windowSize ? opts.windowSize.width : fp.screen.width},${opts.windowSize ? opts.windowSize.height : fp.screen.height}`,
   ];
 

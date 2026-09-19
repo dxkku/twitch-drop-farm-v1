@@ -213,6 +213,8 @@ async function launch(opts = {}) {
     '--disable-breakpad',
     '--disable-sync',
     '--metrics-recording-only',
+    '--disk-cache-size=1',
+    '--media-cache-size=1',
     '--disable-background-networking',
     '--disable-client-side-phishing-detection',
     '--disable-default-apps',
