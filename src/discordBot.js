@@ -3426,6 +3426,8 @@ function start(token) {
                 .setTitle('🔐 Cookies & Ban Detection')
                 .setDescription('Keep accounts healthy — check sessions and detect bans.')
                 .addFields(
+                  { name: '`!login [parallel]`',
+                    value: 'Finds all accounts with broken/missing sessions (≤6 cookies) and re-logs them in automatically.\n• **parallel** — How many to fix at once (default: 2, max: 10)\n> 📌 `!login 5`' },
                   { name: '`!checkcookies <username|all>`',
                     value: 'Opens each account in a real browser and tests if the session is still valid.\nIf cookies are broken it tries to re-login automatically.\n> 📌 `!checkcookies all`' },
                   { name: '`!checkbanned [username] [parallel]`',
