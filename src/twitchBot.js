@@ -331,12 +331,32 @@ async function puppeteerModeSignup(password) {
       console.log('DEBUG WARNING: password input not found!');
     }
 
-    // ===== Fill username =====
+    // ===== Fill username — retry up to 8 times if Twitch says "unavailable" =====
     const unInput = await page.$('#signup-username') || await page.$('input[name="username"]') || await page.$('input[autocomplete="username"]');
     if (unInput) {
-      await unInput.type(username);
-      await sleep(200);
-      console.log('DEBUG username filled:', username);
+      let usernameOk = false;
+      for (let uAttempt = 0; uAttempt < 8; uAttempt++) {
+        await unInput.click({ clickCount: 3 });
+        await page.keyboard.press('Backspace');
+        await unInput.type(username);
+        await sleep(600);
+        const unavailable = await page.evaluate(() => {
+          const els = document.querySelectorAll('[role="alert"], [class*="form-error"], [class*="error-message"]');
+          for (const el of els) {
+            const t = el.textContent.toLowerCase();
+            if (t.includes('unavailable') || t.includes('username is taken') || t.includes('already taken')) return true;
+          }
+          return false;
+        }).catch(() => false);
+        if (!unavailable) {
+          usernameOk = true;
+          console.log(`DEBUG username filled (attempt ${uAttempt + 1}): ${username}`);
+          break;
+        }
+        console.log(`DEBUG username "${username}" unavailable — trying new one`);
+        username = generateUsername();
+      }
+      if (!usernameOk) console.log('DEBUG WARNING: could not find an available username after 8 tries');
     } else {
       console.log('DEBUG WARNING: username input not found!');
     }
