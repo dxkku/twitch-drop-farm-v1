@@ -642,11 +642,14 @@ async function puppeteerModeSignup(password) {
 
     const hasPfp = false;
 
-    // Reload page to ensure cookies are fully set before saving
+    // Reload page to ensure cookies are fully set before saving.
+    // Use 'load' not 'networkidle2' — Twitch keeps WebSocket connections open
+    // permanently so networkidle2 always times out, leaving the page in a
+    // partial state when page.cookies() runs.
     try {
       console.log('DEBUG [createTwitchAccount] Reloading page to refresh cookies...');
-      await page.reload({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
-      await sleep(3000);
+      await page.reload({ waitUntil: 'load', timeout: 20000 }).catch(() => {});
+      await sleep(2000);
     } catch(e) {}
 
     // Extract cookies after reload — ensures fresh valid cookies
@@ -661,16 +664,10 @@ async function puppeteerModeSignup(password) {
   } finally {
     try { if (browser) browser.close(); } catch(e) {}
     // DO NOT close proxy — shared across retries
+    // Delete only THIS account's own profile — do NOT scan and delete other profiles
+    // since parallel account creations share tmp_profiles/ and would delete each other's
+    // active directories, causing incomplete cookies on concurrent signups.
     try { require('fs').rmSync(tmpDir, { recursive: true, force: true }); } catch(e) {}
-    try {
-      const profileDir = path.join(__dirname, '../tmp_profiles');
-      const profiles = require('fs').readdirSync(profileDir).filter(f => f.startsWith('profile_'));
-      profiles.sort();
-      while (profiles.length > 5) {
-        const old = profiles.shift();
-        require('fs').rmSync(path.join(profileDir, old), { recursive: true, force: true });
-      }
-    } catch(e) {}
   }
 }
 
