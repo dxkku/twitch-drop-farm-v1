@@ -2359,6 +2359,294 @@ function start(token) {
         }
 
         // ============================
+        // !login [parallel] — Login accounts that have ≤6 cookies (session not saved / account not created)
+        // ============================
+        case 'login': {
+          const loginParallel = Math.min(parseInt(args[0]) || 2, 10);
+          const IS_SERVER_LG = process.platform === 'linux' || process.env.SERVER_MODE === '1';
+          const stealthLG = IS_SERVER_LG ? require('./stealth/serverLauncher.js') : require('./stealth/index.js');
+          function sleepLg(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+          const toLogin = getLinkedAccounts().filter(a => !a.cookies || a.cookies.length <= 6);
+          if (toLogin.length === 0) {
+            return msg.channel.send('✅ No accounts with missing/broken sessions found (all have >6 cookies).');
+          }
+
+          const lgSummary = { loggedIn: 0, deleted: 0, failed: 0 };
+          let lgCompleted = 0;
+          const lgTotal = toLogin.length;
+
+          const lgEmbed = new EmbedBuilder()
+            .setColor(0xFFAA00)
+            .setTitle(`🔑 Login Fix — [0/${lgTotal}]`)
+            .setDescription(`Found **${lgTotal}** account(s) with ≤6 cookies. Logging in...`)
+            .setFields({ name: '📊', value: `✅ 0 logged in | 🗑️ 0 deleted | ❌ 0 failed | ⏳ ${lgTotal} left`, inline: false });
+          const lgMsg = await msg.channel.send({ embeds: [lgEmbed] });
+
+          async function loginOne(acc) {
+            const username = acc.twitchData?.username || acc.username;
+            const password = acc.password;
+            if (!username || !password) { lgSummary.failed++; lgCompleted++; return; }
+
+            const MAX_RETRIES = 2;
+            for (let retry = 1; retry <= MAX_RETRIES; retry++) {
+              let browser = null, chromeProc = null, tmpDir = null;
+              try {
+                tmpDir = require('path').join(require('os').tmpdir(), 'login_' + acc.id + '_' + Date.now());
+                try { fs.mkdirSync(tmpDir, { recursive: true }); } catch(e) {}
+
+                const launched = await stealthLG.launch({ userDataDir: tmpDir, windowSize: { width: 1280, height: 720 } });
+                browser = launched.browser;
+                chromeProc = launched.chromeProc;
+                const page = launched.page; // use the KPSDK warmup tab — no second tab
+
+                // Wait for initial twitch.tv/ to finish loading
+                await page.waitForFunction(() => document.readyState === 'complete', { timeout: 30000 }).catch(() => {});
+                await sleepLg(1000);
+
+                // Spoof WebGL renderer imperatively on the live document so the patch persists
+                // through any SPA navigation (React Router) to /login without a full page reload.
+                // The evaluateOnNewDocument in stealth/index.js covers full page reloads.
+                await page.evaluate(() => {
+                  const spoof = (proto) => {
+                    try {
+                      const orig = proto.getParameter;
+                      if (orig && orig.__lgSpoofed) return;
+                      const fn = function(p) {
+                        if (p === 37445) return 'Google Inc. (NVIDIA)';
+                        if (p === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                        return Reflect.apply(orig, this, arguments);
+                      };
+                      fn.__lgSpoofed = true;
+                      proto.getParameter = fn;
+                    } catch(e) {}
+                  };
+                  spoof(WebGLRenderingContext.prototype);
+                  try { spoof(WebGL2RenderingContext.prototype); } catch(e) {}
+                  try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true }); } catch(e) {}
+                }).catch(() => {});
+
+                // ── Step 1: existence check (same as !checkbanned) ──────────────────
+                // Navigate to the channel page first. If Twitch shows "time machine" or
+                // "content is unavailable" the account was never created / was deleted.
+                // Delete from DB and skip login entirely.
+                await page.goto('https://www.twitch.tv/' + encodeURIComponent(username), {
+                  waitUntil: 'networkidle2', timeout: 40000,
+                });
+                try {
+                  await page.waitForFunction(
+                    () => {
+                      const t = (document.body?.innerText || '').toLowerCase();
+                      return t.includes('violation of twitch') || t.includes('time machine') ||
+                             t.includes('content is unavailable') || t.includes('is offline') ||
+                             t.includes(' followers') || t.includes('turn on notifications');
+                    },
+                    { timeout: 30000 }
+                  );
+                } catch(e) { /* timeout — page unclear, proceed anyway */ }
+
+                const channelText = await page.evaluate(
+                  () => (document.body?.innerText || '').toLowerCase()
+                ).catch(() => '');
+                const notExists = channelText.includes('time machine') ||
+                                  channelText.includes('content is unavailable');
+                if (notExists) {
+                  console.log(`DEBUG [login] ${username}: channel not found on Twitch — deleting`);
+                  delete accounts[acc.id];
+                  saveAccounts();
+                  lgSummary.deleted++;
+                  break; // exits retry loop; lgCompleted++ still runs below
+                }
+                console.log(`DEBUG [login] ${username}: channel exists — proceeding to login`);
+                // ── Step 2: login ────────────────────────────────────────────────────
+
+                await page.goto('https://www.twitch.tv/login', { waitUntil: 'domcontentloaded', timeout: 45000 });
+                await sleepLg(3000);
+
+                // Dismiss cookie banner
+                await page.evaluate(() => {
+                  for (const b of document.querySelectorAll('button')) {
+                    const t = b.textContent.trim().toLowerCase();
+                    if (['accept','accepter','aceptar','akzeptieren','aceitar','kabul et'].includes(t)) { b.click(); return; }
+                  }
+                }).catch(() => {});
+                await sleepLg(1000);
+
+                // "browser not supported" banner is cosmetic — the login form still works.
+                // We log it but do NOT bail out; we proceed and let the finalLoggedIn check decide.
+
+                let usernameInput = null;
+                for (let i = 0; i < 15; i++) {
+                  usernameInput = await page.$('#login-username') || await page.$('input[autocomplete="username"]');
+                  if (usernameInput) break;
+                  await sleepLg(2000);
+                }
+                if (!usernameInput) { lgSummary.failed++; break; }
+
+                await usernameInput.click();
+                await sleepLg(300);
+                await page.keyboard.type(username, { delay: 50 });
+
+                const pwInput = await page.$('#password-input, input[type="password"]');
+                if (!pwInput) { lgSummary.failed++; break; }
+                await pwInput.click();
+                await sleepLg(300);
+                await page.keyboard.type(password, { delay: 50 });
+                await sleepLg(1000);
+
+                await page.waitForSelector('button[type="submit"]:not([disabled])', { timeout: 15000 }).catch(() => {});
+                let loginBtn = await page.$('button[data-a-target="passport-login-button"]');
+                if (!loginBtn) {
+                  const handle = await page.evaluateHandle(() => {
+                    for (const btn of document.querySelectorAll('button[type="submit"]')) {
+                      if (btn.offsetParent !== null) return btn;
+                    }
+                    return null;
+                  });
+                  if (handle && handle.asElement) loginBtn = handle.asElement();
+                }
+                if (loginBtn) await loginBtn.click();
+                await sleepLg(5000);
+
+                // Username does not exist → delete from DB
+                const userNotExist = await page.evaluate(() => {
+                  const t = document.body?.innerText?.toLowerCase() || '';
+                  return t.includes('this username does not exist') || t.includes('username does not exist') ||
+                         t.includes("ce nom d'utilisateur n'existe pas") || t.includes('este nombre de usuario no existe');
+                }).catch(() => false);
+                if (userNotExist) {
+                  console.log(`DEBUG [login] ${username}: username does not exist — deleting`);
+                  delete accounts[acc.id];
+                  saveAccounts();
+                  lgSummary.deleted++;
+                  break;
+                }
+
+                // Verification code?
+                const hasCodeForm = await page.evaluate(() => {
+                  const small = [...document.querySelectorAll('input')].filter(i => { const r = i.getBoundingClientRect(); return r.width > 0 && r.width < 100 && r.height > 0; });
+                  return small.length >= 6;
+                }).catch(() => false);
+
+                if (hasCodeForm) {
+                  const accEmail = acc.twitchData?.email || acc.email;
+                  console.log(`DEBUG [login] ${username}: needs verification code for ${accEmail}`);
+                  try {
+                    const emailReader = require('./emailReader');
+                    const code = await emailReader.waitForCode({ address: accEmail, type: 'imap', since: Date.now() }, 90000);
+                    if (code) {
+                      const boxes = await page.$$('[data-a-target="passport-verification-code-modal"] input, input[maxlength="1"]').catch(() => []);
+                      if (boxes.length >= 6) {
+                        for (let i = 0; i < 6; i++) {
+                          await boxes[i].click();
+                          await page.keyboard.type(code[i] || '', { delay: 100 });
+                          await sleepLg(80);
+                        }
+                      } else {
+                        const codeInput = await page.evaluateHandle(() => {
+                          for (const inp of document.querySelectorAll('input')) {
+                            const r = inp.getBoundingClientRect();
+                            if (r.width > 0 && r.width < 100) return inp;
+                          }
+                          return null;
+                        });
+                        if (codeInput && codeInput.asElement && codeInput.asElement()) {
+                          await codeInput.asElement().click();
+                          for (const d of code.toString()) { await page.keyboard.type(d, { delay: 150 }); await sleepLg(100); }
+                        }
+                      }
+                      const submitHandle = await page.evaluateHandle(() => {
+                        for (const btn of document.querySelectorAll('button')) {
+                          const t = btn.textContent.trim().toLowerCase();
+                          if (['submit','enviar','envoyer','absenden'].includes(t)) return btn;
+                        }
+                        return null;
+                      });
+                      if (submitHandle && submitHandle.asElement && submitHandle.asElement()) await submitHandle.asElement().click();
+                      else await page.keyboard.press('Enter');
+                      await sleepLg(8000);
+                    } else {
+                      lgSummary.failed++;
+                      break;
+                    }
+                  } catch(e) {
+                    console.log(`DEBUG [login] ${username}: verification error:`, e.message);
+                    lgSummary.failed++;
+                    break;
+                  }
+                }
+
+                // Final login check
+                await sleepLg(4000);
+                const finalLoggedIn = await page.evaluate(() => {
+                  if (document.querySelector('[data-a-target="user-menu"], [data-a-target="core-top-nav-avatar"], button[data-a-target="profile-menu-trigger"]')) return true;
+                  return !window.location.href.includes('/login');
+                }).catch(() => false);
+
+                if (!finalLoggedIn) {
+                  if (retry < MAX_RETRIES) { await sleepLg(10000); continue; }
+                  lgSummary.failed++;
+                  break;
+                }
+
+                // Save fresh cookies
+                await page.reload({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+                await sleepLg(3000);
+                const freshCookies = await page.cookies();
+                acc.cookies = freshCookies;
+                saveAccounts();
+                console.log(`DEBUG [login] ${username}: success — saved ${freshCookies.length} cookies`);
+                lgSummary.loggedIn++;
+                break;
+
+              } catch(e) {
+                console.log(`DEBUG [login] ${username}: error (attempt ${retry}/${MAX_RETRIES}):`, e.message);
+                if (retry >= MAX_RETRIES) lgSummary.failed++;
+              } finally {
+                if (chromeProc && chromeProc.pid) {
+                  try { require('child_process').execSync(`taskkill /F /T /PID ${chromeProc.pid}`, { stdio: 'ignore' }); } catch {}
+                  try { chromeProc.kill(); } catch {}
+                }
+                if (browser) try { browser.disconnect(); } catch {}
+                if (tmpDir) try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+              }
+            }
+
+            lgCompleted++;
+            lgEmbed
+              .setTitle(`🔑 Login Fix — [${lgCompleted}/${lgTotal}]`)
+              .setFields({ name: '📊', value: `✅ ${lgSummary.loggedIn} logged in | 🗑️ ${lgSummary.deleted} deleted | ❌ ${lgSummary.failed} failed | ⏳ ${lgTotal - lgCompleted} left`, inline: false });
+            await lgMsg.edit({ embeds: [lgEmbed] }).catch(() => {});
+          }
+
+          // Concurrency queue
+          const lgQueue = [...toLogin];
+          const lgRunning = [];
+          while (lgQueue.length > 0 || lgRunning.length > 0) {
+            while (lgRunning.length < loginParallel && lgQueue.length > 0) {
+              const acc = lgQueue.shift();
+              const p = loginOne(acc).then(() => { lgRunning.splice(lgRunning.indexOf(p), 1); });
+              lgRunning.push(p);
+            }
+            if (lgRunning.length > 0) await Promise.race(lgRunning);
+          }
+
+          lgEmbed
+            .setColor(0x00FF00)
+            .setTitle('🔑 Login Fix — Complete')
+            .setDescription(
+              `✅ **${lgSummary.loggedIn}** logged in & cookies saved\n` +
+              `🗑️ **${lgSummary.deleted}** deleted (username not found on Twitch)\n` +
+              `❌ **${lgSummary.failed}** failed\n\n` +
+              `**${lgTotal}** account(s) processed`
+            )
+            .setFields([])
+            .setTimestamp();
+          await lgMsg.edit({ embeds: [lgEmbed] });
+          break;
+        }
+
+        // ============================
         // !cleanup — Remove accounts without cookies
         // ============================
         case 'cleanup': {

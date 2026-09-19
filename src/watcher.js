@@ -111,6 +111,8 @@ async function watchStream(accId, streamerName) {
       } catch(e) {}
     };
     await page.evaluateOnNewDocument(chromeRuntimePatch).catch(() => {});
+    const { STEALTH_EVALS: _stealthEvals } = require('./stealth/index.js');
+    await page.evaluateOnNewDocument(_stealthEvals).catch(() => {});
     await page.waitForFunction(() => document.readyState === 'complete', { timeout: 30000 }).catch(() => {});
     await sleep(500);
     await page.evaluate(chromeRuntimePatch).catch(() => {});
@@ -614,11 +616,34 @@ async function watchStream(accId, streamerName) {
       console.log(`DEBUG [watcher] ${username}: login failed, will watch as guest (drops won't count)`);
     }
 
-    // Navigate to rocketleague and follow (for drops)
+    // ── TAB 2: inventory page — opened once, stays open for the whole session ────
+    let inventoryPage = null;
     if (loggedIn) {
       try {
-        console.log(`DEBUG [watcher] ${username}: following rocketleague for drops...`);
-        await page.goto('https://www.twitch.tv/rocketleague', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        inventoryPage = await browser.newPage();
+        await inventoryPage.evaluateOnNewDocument(chromeRuntimePatch).catch(() => {});
+        const { STEALTH_EVALS } = require('./stealth/index.js');
+        await inventoryPage.evaluateOnNewDocument(STEALTH_EVALS).catch(() => {});
+
+        // Pre-watch drops check: is the RL campaign already connected for this account?
+        // If drops/inventory shows RL items → connected, skip the follow step.
+        // If not → follow rocketleague first so drops become eligible.
+        console.log(`DEBUG [watcher] ${username}: checking drops/inventory for RL campaign...`);
+        await inventoryPage.goto('https://www.twitch.tv/drops/inventory', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await sleep(4000);
+        await inventoryPage.keyboard.press('Escape').catch(() => {});
+
+        const dropsConnected = await inventoryPage.evaluate(() => {
+          const text = (document.body?.innerText || '').toLowerCase();
+          return text.includes('rocket league') || text.includes('rl world') || text.includes('rlcs');
+        }).catch(() => false);
+
+        console.log(`DEBUG [watcher] ${username}: RL drops connected: ${dropsConnected}`);
+
+        if (!dropsConnected) {
+          // Follow rocketleague so drops become available
+          console.log(`DEBUG [watcher] ${username}: RL drops NOT connected — following rocketleague...`);
+          await page.goto('https://www.twitch.tv/rocketleague', { waitUntil: 'domcontentloaded', timeout: 30000 });
         await sleep(8000);
 
         // Dismiss welcome modal if it appears again
@@ -686,16 +711,24 @@ async function watchStream(accId, streamerName) {
         });
 
         console.log(`DEBUG [watcher] ${username}: rocketleague follow: ${followResult}`);
+        } else {
+          console.log(`DEBUG [watcher] ${username}: RL drops already connected — skipping follow step`);
+        }
       } catch(e) {
-        console.log(`DEBUG [watcher] ${username}: rocketleague follow error: ${e.message}`);
+        console.log(`DEBUG [watcher] ${username}: inventory pre-check error: ${e.message}`);
       }
     }
 
-    // Navigate to streamer's channel
+    // ── TAB 1: navigate to streamer's channel ────────────────────────────────
     const cleanStreamer = streamerName.replace(/[^a-zA-Z0-9_]/g, '');
     console.log(`DEBUG [watcher] ${username}: navigating to ${cleanStreamer}...`);
     await page.goto(`https://www.twitch.tv/${cleanStreamer}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await sleep(5000);
+
+    // ── TAB 2: navigate inventoryPage to drops/inventory for ongoing monitoring
+    if (inventoryPage) {
+      inventoryPage.goto('https://www.twitch.tv/drops/inventory', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    }
 
     // Click "Start Watching" button if present (mature content warning)
     try {
@@ -830,7 +863,7 @@ async function watchStream(accId, streamerName) {
 
     // Store watcher
     const startedAt = Date.now();
-    activeWatchers[accId] = { browser, chromeProc, page, streamer: cleanStreamer, username, startedAt, lastDropsClaim: 0 };
+    activeWatchers[accId] = { browser, chromeProc, page, inventoryPage, streamer: cleanStreamer, username, startedAt, lastDropsCheck: 0, closeDropPending: false };
     delete launching[accId];
 
     // Save startedAt to account for persistence across restarts
@@ -869,26 +902,29 @@ async function watchStream(accId, streamerName) {
           console.log(`DEBUG [watcher] ${username}: ⏱ ${hours}/5 hours watched ${hours >= 5 ? '(drops eligible!)' : ''}`);
         }
 
-        // Check for drops to claim every 30 minutes
-        if (uptimeMs - activeWatchers[accId].lastDropsClaim >= 30 * 60 * 1000) {
-          activeWatchers[accId].lastDropsClaim = uptimeMs;
-          try {
-            console.log(`DEBUG [watcher] ${username}: checking drops inventory...`);
-            await page.goto('https://www.twitch.tv/drops/inventory', { waitUntil: 'domcontentloaded', timeout: 45000 });
+        // ── TAB 2 drops check (Tab 1 / page stays on stream the whole time) ───
+        // Normal interval: 15 min. If a drop is close to done (≤90 min left): 5 min.
+        const dropCheckInterval = activeWatchers[accId].closeDropPending ? 5 * 60 * 1000 : 15 * 60 * 1000;
+        if (Date.now() - activeWatchers[accId].lastDropsCheck >= dropCheckInterval) {
+          activeWatchers[accId].lastDropsCheck = Date.now();
+          const invPage = activeWatchers[accId].inventoryPage;
+          if (invPage) try {
+            console.log(`DEBUG [watcher] ${username}: checking drops inventory (Tab 2)...`);
+            await invPage.goto('https://www.twitch.tv/drops/inventory', { waitUntil: 'domcontentloaded', timeout: 45000 });
             await sleep(5000);
 
             // Dismiss any modal
-            await page.keyboard.press('Escape').catch(() => {});
+            await invPage.keyboard.press('Escape').catch(() => {});
             await sleep(1000);
 
-            // Look for claim buttons — scroll to find them
+            // Scroll to find claim buttons
             for (let i = 0; i < 5; i++) {
-              await page.evaluate(() => window.scrollBy(0, 300));
+              await invPage.evaluate(() => window.scrollBy(0, 300));
               await sleep(500);
             }
 
-            // Find claim buttons first (one at a time)
-            const claimBtnTexts = await page.evaluate(() => {
+            // Find claim buttons
+            const claimBtnTexts = await invPage.evaluate(() => {
               const btns = [];
               for (const btn of document.querySelectorAll('button')) {
                 if (btn.offsetParent === null) continue;
@@ -900,19 +936,16 @@ async function watchStream(accId, streamerName) {
                   dt === 'claim-button' || label.includes('claim') ||
                   tAr.includes('المطالبة') || tAr.includes('ادعاء');
                 const isConn = t.includes('connect') || t.includes('conectar') || t.includes('connecter') || t.includes('اتصال');
-                if (isClaim && !isConn) {
-                  btns.push(btn.textContent.trim());
-                }
+                if (isClaim && !isConn) btns.push(btn.textContent.trim());
               }
               return btns;
             });
             console.log(`DEBUG [watcher] ${username}: found ${claimBtnTexts.length} claimable drop(s)`);
 
-            // Click ONE AT A TIME — use real mouse click (React ignores synthetic btn.click())
+            // Click ONE AT A TIME via real mouse click (React ignores synthetic btn.click())
             let claimedCount = 0;
             for (let ci = 0; ci < claimBtnTexts.length; ci++) {
-              // Re-find the button each iteration (DOM changes after each claim)
-              const btnRect = await page.evaluate(() => {
+              const btnRect = await invPage.evaluate(() => {
                 for (const btn of document.querySelectorAll('button')) {
                   const t = btn.textContent.trim().toLowerCase();
                   const tAr = btn.textContent.trim();
@@ -931,31 +964,26 @@ async function watchStream(accId, streamerName) {
                 return null;
               }).catch(() => null);
 
-              if (!btnRect) {
-                console.log(`DEBUG [watcher] ${username}: no claim button found on iteration ${ci + 1}`);
-                break;
-              }
+              if (!btnRect) { console.log(`DEBUG [watcher] ${username}: no claim button found on iteration ${ci + 1}`); break; }
 
               await sleep(500);
-              // Real mouse click — triggers React synthetic events properly
-              await page.mouse.click(btnRect.x, btnRect.y);
+              await invPage.mouse.click(btnRect.x, btnRect.y);
               console.log(`DEBUG [watcher] ${username}: clicked "${btnRect.text}" at (${Math.round(btnRect.x)}, ${Math.round(btnRect.y)})`);
               await sleep(10000);
 
-              // Dismiss any confirmation popup
-              await page.evaluate(() => {
+              await invPage.evaluate(() => {
                 document.querySelectorAll('[data-a-target="alert-modal-close"], [aria-label="Close"], button[aria-label*="close" i]').forEach(b => b.click());
               }).catch(() => {});
               await sleep(1000);
 
-              const result = await page.evaluate(() => {
+              const result = await invPage.evaluate(() => {
                 const body = document.body.innerText;
                 return { hasError: /Drop was not claimed|لم يتم المطالبة|حدث خطأ|Error Occurred/i.test(body) };
               }).catch(() => ({ hasError: false }));
 
               if (result.hasError) {
-                console.log(`DEBUG [watcher] ${username}: ❌ "${btnRect.text}" FAILED — Twitch returned an error`);
-                await page.evaluate(() => {
+                console.log(`DEBUG [watcher] ${username}: ❌ "${btnRect.text}" FAILED`);
+                await invPage.evaluate(() => {
                   document.querySelectorAll('[data-a-target="alert-modal-close"], [aria-label="Close"], button[aria-label*="close" i]').forEach(b => b.click());
                 }).catch(() => {});
                 await sleep(1500);
@@ -970,58 +998,54 @@ async function watchStream(accId, streamerName) {
             if (claimedCount > 0) {
               const prev = activeWatchers[accId].dropsClaimed || 0;
               activeWatchers[accId].dropsClaimed = prev + claimedCount;
-              // Persist total drops claimed to accounts.json
               const stateRef = require('./state');
               if (stateRef.accounts[accId]) {
                 stateRef.accounts[accId].dropsClaimed = (stateRef.accounts[accId].dropsClaimed || 0) + claimedCount;
                 stateRef.saveAccounts();
               }
               console.log(`DEBUG [watcher] ${username}: 🎁 claimed ${claimedCount} drop(s) — stopping so next account can take over`);
-              // Stop this watcher — rotation will start the next idle account automatically
               clearInterval(keepAlive);
               await stopWatching(accId);
               return;
-            } else if (claimBtnTexts.length === 0) {
-              console.log(`DEBUG [watcher] ${username}: no drops ready to claim`);
             }
 
-            // Read progress for each drop
-            const dropProgress = await page.evaluate(() => {
-              const items = document.querySelectorAll('[data-a-target="drops-dashboard-collection-item"]');
+            // Read drop progress — correct parse: "87% of 4 hours" → pct=87, totalHours=4
+            const dropProgress = await invPage.evaluate(() => {
               const results = [];
+              const items = document.querySelectorAll('[data-a-target="drops-dashboard-collection-item"], [class*="drop-item"], [class*="inventory"]');
               for (const item of items) {
-                const text = item.textContent;
-                const nameMatch = text.match(/(RLCS\s*\d+\w*\s*\w+|RL x \w+ Drop Rush)/i) || text.match(/(.*?Drop)/i);
-                const name = nameMatch ? nameMatch[0].trim().slice(0, 40) : text.slice(0, 40);
-                const progressMatch = text.match(/(\d+\.?\d*)\s*%\s*(?:of|de|von|dan|من|saat|ساعات?|horas?|heures?|Stunden?|ساعتين?)\s*(\d+\.?\d*)/i);
-                if (progressMatch) {
-                  const pct = Math.round((parseFloat(progressMatch[1]) / parseFloat(progressMatch[2])) * 100);
-                  results.push({ name, pct, hours: parseFloat(progressMatch[2]) });
+                const text = item.innerText || item.textContent || '';
+                const m = text.match(/(\d+(?:\.\d+)?)\s*%\s*(?:of|de|von|van|з|من)\s*(\d+(?:\.\d+)?)\s*(?:hours?|h\b|hrs?|heures?|Stunden?|horas?|ساعات?)/i);
+                if (m) {
+                  const pct = parseFloat(m[1]);         // e.g. 87
+                  const totalHours = parseFloat(m[2]);  // e.g. 4
+                  const remainingMinutes = Math.round(totalHours * (1 - pct / 100) * 60);
+                  const name = text.split('\n')[0].trim().slice(0, 40) || 'Drop';
+                  results.push({ name, pct, totalHours, remainingMinutes });
                 }
               }
               return results;
-            });
+            }).catch(() => []);
+
+            let hasCloseDrops = false;
             for (const dp of dropProgress) {
+              const remaining = `${dp.remainingMinutes}min left`;
               if (dp.pct >= 100) {
-                console.log(`DEBUG [watcher] ${username}: 🎁 ${dp.name} — ${dp.pct}% of ${dp.hours}h (READY!)`);
+                console.log(`DEBUG [watcher] ${username}: 🎁 ${dp.name} — ${dp.pct}% (READY!)`);
               } else {
-                console.log(`DEBUG [watcher] ${username}: ⏱ ${dp.name} — ${dp.pct}% of ${dp.hours}h`);
+                console.log(`DEBUG [watcher] ${username}: ⏱ ${dp.name} — ${dp.pct}% of ${dp.totalHours}h (${remaining})`);
+                // Smart stay: if ≤90 min remaining, flag as close — check every 5 min, don't rotate
+                if (dp.remainingMinutes <= 90) {
+                  hasCloseDrops = true;
+                  console.log(`DEBUG [watcher] ${username}: 🏁 ${dp.name} is close! Staying until it's done (${remaining})`);
+                }
               }
             }
+            activeWatchers[accId].closeDropPending = hasCloseDrops;
 
-            // Go back to stream
-            await page.goto(`https://www.twitch.tv/${cleanStreamer}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
-            await sleep(3000);
-            // Re-mute
-            await page.evaluate(() => {
-              const video = document.querySelector('video');
-              if (video) { video.muted = true; video.volume = 0; }
-            }).catch(() => {});
+            // Tab 1 (page) never left the stream — no need to navigate back
           } catch (dropsErr) {
             console.log(`DEBUG [watcher] ${username}: drops check error: ${dropsErr.message}`);
-            // Navigate back to stream if we failed
-            await page.goto(`https://www.twitch.tv/${cleanStreamer}`, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
-            await sleep(3000);
           }
         }
       } catch (e) {

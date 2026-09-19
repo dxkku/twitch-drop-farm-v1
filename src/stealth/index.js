@@ -54,6 +54,45 @@ async function waitForDevTools(port, timeout = 15000) {
   throw new Error(`Chrome DevTools not ready on port ${port} after ${timeout}ms`);
 }
 
+// Injected into every page before any script runs.
+// Spoofs: WebGL renderer (hides SwiftShader), document visibility (tab always
+// "visible" so Twitch never pauses drop progress), navigator.webdriver removed.
+function STEALTH_EVALS() {
+  // WebGL renderer spoof
+  const spoofGL = (proto) => {
+    try {
+      const orig = proto.getParameter;
+      if (orig && orig.__lgSpoofed) return;
+      const fn = function(p) {
+        if (p === 37445) return 'Google Inc. (NVIDIA)';
+        if (p === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)';
+        return Reflect.apply(orig, this, arguments);
+      };
+      fn.__lgSpoofed = true;
+      proto.getParameter = fn;
+    } catch(e) {}
+  };
+  spoofGL(WebGLRenderingContext.prototype);
+  try { spoofGL(WebGL2RenderingContext.prototype); } catch(e) {}
+
+  // Visibility spoof — Twitch pauses drop watch-time when document.hidden=true
+  try {
+    Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+    // Swallow visibilitychange events so Twitch can't react to the tab going background
+    const _addEL = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function(type, listener, opts) {
+      if (type === 'visibilitychange') return;
+      return _addEL.call(this, type, listener, opts);
+    };
+  } catch(e) {}
+
+  // Remove webdriver flag
+  try {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+  } catch(e) {}
+}
+
 /**
  * LATE CDP CONNECTION — the key technique against Kasada KPSDK.
  *
@@ -92,8 +131,8 @@ async function launch(opts = {}) {
     '--force-color-profile=srgb',
     '--metrics-recording-only',
     '--ignore-gpu-blocklist',
-    '--enable-unsafe-swiftshader',
-    '--disable-features=IsolateOrigins,site-per-process',
+    '--use-gl=angle',
+    '--enable-gpu-rasterization',
     `--window-size=${opts.windowSize ? opts.windowSize.width : fp.screen.width},${opts.windowSize ? opts.windowSize.height : fp.screen.height}`,
   ];
 
@@ -124,30 +163,14 @@ async function launch(opts = {}) {
   const browser = await puppeteer.connect({
     browserURL:      `http://127.0.0.1:${port}`,
     defaultViewport: { width: fp.screen.width, height: fp.screen.height },
-    protocolTimeout: 15000,
+    protocolTimeout: 60000,
   });
   console.log(`DEBUG [stealth] CDP connected after KPSDK delay`);
 
   const pages      = await browser.pages();
   const twitchPage = pages.find(p => p.url().includes('twitch.tv')) || pages[0];
 
-  // Spoof WebGL renderer on all future navigations — prevents Twitch "browser not
-  // currently supported" detection caused by SwiftShader being identified as a
-  // non-hardware GPU renderer via WebGLRenderingContext.getParameter(37446).
-  await twitchPage.evaluateOnNewDocument(() => {
-    const spoof = (proto) => {
-      try {
-        const orig = proto.getParameter;
-        proto.getParameter = function(p) {
-          if (p === 37445) return 'Google Inc. (NVIDIA)';
-          if (p === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)';
-          return Reflect.apply(orig, this, arguments);
-        };
-      } catch(e) {}
-    };
-    spoof(WebGLRenderingContext.prototype);
-    try { spoof(WebGL2RenderingContext.prototype); } catch(e) {}
-  }).catch(() => {});
+  await twitchPage.evaluateOnNewDocument(STEALTH_EVALS).catch(() => {});
 
   return { browser, page: twitchPage, fingerprint: fp, chromeProc, debugPort: port };
 }
@@ -164,8 +187,9 @@ async function applyStealthToPage(page, fp) {
 
 async function newStealthPage(browser, fp) {
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(STEALTH_EVALS).catch(() => {});
   await applyStealthToPage(page, fp);
   return page;
 }
 
-module.exports = { launch, applyStealthToPage, newStealthPage, findChrome };
+module.exports = { launch, applyStealthToPage, newStealthPage, findChrome, STEALTH_EVALS };

@@ -191,12 +191,11 @@ async function launch(opts = {}) {
     `--remote-debugging-port=${port}`,
     '--disable-blink-features=AutomationControlled',
 
-    // GPU flags — Linux VPS has no GPU so we must force software rendering.
-    // Windows Server via RDP has a virtual display adapter with basic GPU support —
-    // do NOT use --disable-gpu on Windows: it forces SwiftShader which makes the
-    // Canvas/WebGL fingerprint look wrong to Kasada's server → 400.
-    ...(IS_LINUX ? ['--disable-gpu', '--disable-software-rasterizer'] : []),
-    '--enable-unsafe-swiftshader',  // WebGL fallback if no real GPU
+    // GPU flags — Linux VPS has no GPU so SwiftShader is the only WebGL option.
+    // Windows Server has a virtual adapter — use ANGLE instead of forcing SwiftShader.
+    ...(IS_LINUX
+      ? ['--disable-gpu', '--disable-software-rasterizer', '--enable-unsafe-swiftshader']
+      : ['--use-gl=angle', '--enable-gpu-rasterization']),
     '--ignore-gpu-blocklist',
     '--force-color-profile=srgb',
 
@@ -258,13 +257,51 @@ async function launch(opts = {}) {
   const browser = await puppeteer.connect({
     browserURL:      `http://127.0.0.1:${port}`,
     defaultViewport: { width: fp.screen.width, height: fp.screen.height },
+    protocolTimeout: 60000,
   });
   console.log(`DEBUG [server-stealth] CDP connected after KPSDK delay`);
 
   const pages      = await browser.pages();
   const twitchPage = pages.find(p => p.url().includes('twitch.tv')) || pages[0];
 
+  await twitchPage.evaluateOnNewDocument(STEALTH_EVALS).catch(() => {});
+
   return { browser, page: twitchPage, fingerprint: fp, chromeProc, debugPort: port };
+}
+
+// Injected into every page before any script runs.
+// Spoofs: WebGL renderer, document visibility (tab always "visible"),
+// navigator.webdriver removed.
+function STEALTH_EVALS() {
+  const spoofGL = (proto) => {
+    try {
+      const orig = proto.getParameter;
+      if (orig && orig.__lgSpoofed) return;
+      const fn = function(p) {
+        if (p === 37445) return 'Google Inc. (NVIDIA)';
+        if (p === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)';
+        return Reflect.apply(orig, this, arguments);
+      };
+      fn.__lgSpoofed = true;
+      proto.getParameter = fn;
+    } catch(e) {}
+  };
+  spoofGL(WebGLRenderingContext.prototype);
+  try { spoofGL(WebGL2RenderingContext.prototype); } catch(e) {}
+
+  try {
+    Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+    const _addEL = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function(type, listener, opts) {
+      if (type === 'visibilitychange') return;
+      return _addEL.call(this, type, listener, opts);
+    };
+  } catch(e) {}
+
+  try {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+  } catch(e) {}
 }
 
 async function applyStealthToPage(page, fp) {
@@ -279,8 +316,9 @@ async function applyStealthToPage(page, fp) {
 
 async function newStealthPage(browser, fp) {
   const page = await browser.newPage();
+  await page.evaluateOnNewDocument(STEALTH_EVALS).catch(() => {});
   await applyStealthToPage(page, fp);
   return page;
 }
 
-module.exports = { launch, applyStealthToPage, newStealthPage };
+module.exports = { launch, applyStealthToPage, newStealthPage, STEALTH_EVALS };
