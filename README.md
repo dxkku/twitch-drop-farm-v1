@@ -14,21 +14,6 @@ Automated Twitch account creator, stream watcher, and drop farmer with Kasada by
 
 ---
 
-## Known Limitations
-
-### Gmail Alias Rate Limit — ~6 Accounts per 24 Hours
-
-**Problem:** Twitch tracks signups by the **base Gmail address**, not by alias. After creating approximately **6 accounts** using the same Gmail (e.g. `youremail+acc001@gmail.com`, `youremail+acc002@gmail.com`, etc.), Twitch suspends further signups from that base email for **~24 hours**.
-
-The bot runs fine — but Twitch silently stops sending verification codes to any alias of that Gmail, so accounts will fail to verify after the 6th one.
-
-**Manual workaround:** Use a different Gmail account for every ~5 accounts. Update `IMAP_USER` and `IMAP_PASS` in `.env` and restart.
-
-> **⚠️ Automated multi-Gmail rotation (no manual steps needed) is available in the private version only.**
-> [Join the Discord](https://discord.gg/kq7Rh3AKZH) for access.
-
----
-
 ## Features
 
 - **Account Creation** — Bypasses Kasada anti-bot with real Chrome (late-CDP pattern)
