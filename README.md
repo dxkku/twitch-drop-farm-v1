@@ -14,6 +14,11 @@ Automated Twitch account creator, stream watcher, and drop farmer with Kasada by
 
 ---
 
+> **⚠️ Known Limitations**
+> Account creation has known limitations that can cause failures during large batch runs.
+> These are fixed in the private version. [Join the Discord](https://discord.gg/kq7Rh3AKZH) for access.
+---
+
 ## Features
 
 - **Account Creation** — Bypasses Kasada anti-bot with real Chrome (late-CDP pattern)
