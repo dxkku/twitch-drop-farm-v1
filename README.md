@@ -14,6 +14,21 @@ Automated Twitch account creator, stream watcher, and drop farmer with Kasada by
 
 ---
 
+## Known Limitations
+
+### Gmail Alias Rate Limit — ~6 Accounts per 24 Hours
+
+**Problem:** Twitch tracks signups by the **base Gmail address**, not by alias. After creating approximately **6 accounts** using the same Gmail (e.g. `youremail+acc001@gmail.com`, `youremail+acc002@gmail.com`, etc.), Twitch suspends further signups from that base email for **~24 hours**.
+
+The bot runs fine — but Twitch silently stops sending verification codes to any alias of that Gmail, so accounts will fail to verify after the 6th one.
+
+**Manual workaround:** Use a different Gmail account for every ~5 accounts. Update `IMAP_USER` and `IMAP_PASS` in `.env` and restart.
+
+> **⚠️ Automated multi-Gmail rotation (no manual steps needed) is available in the private version only.**
+> [Join the Discord](https://discord.gg/kq7Rh3AKZH) for access.
+
+---
+
 ## Features
 
 - **Account Creation** — Bypasses Kasada anti-bot with real Chrome (late-CDP pattern)
@@ -267,23 +282,8 @@ The `smart-` prefix keeps the same IP for the entire signup session (required �
 | Drops not claiming | Make sure `!watch all` is running first |
 | IMAP not reading codes | Use App Password, not your Google login password |
 | Verification code not arriving | Check Gmail spam folder, ensure IMAP is enabled in Gmail settings |
+| Signups fail after ~6 accounts | Gmail alias rate limit hit — see Known Limitations at the top |
 
-
----
-
-## Known Limitations
-
-### Gmail Alias Rate Limit (Email Suspension After ~6 Accounts)
-
-**Problem:** Twitch tracks account signups by the **base Gmail address**, not by alias. After creating approximately **6 accounts** using the same Gmail (e.g. youremail+acc001@gmail.com, youremail+acc002@gmail.com, etc.), Twitch suspends further signups from that email address for **~24 hours**.
-
-This means if you run !createfull with a large count using a single Gmail, the bot will start failing account creation after around the 6th account. The signup process itself runs fine — but the email verification step will either time out or receive no code, because Twitch silently rate-limits the base Gmail address.
-
-**Workaround (manual):** Use a different Gmail account after every ~5-6 accounts. Update IMAP_USER and IMAP_PASS in your .env and restart.
-
-> **⚠️ A proper automated fix for this limitation is available in the paid/private version only.**
-> The private version handles multi-Gmail rotation automatically — no manual .env changes needed.
-> [Join the Discord](https://discord.gg/kq7Rh3AKZH) for access info.
 ---
 
 ## File Structure
@@ -312,5 +312,3 @@ win3000/
 ├── .env.example            — Template — copy this to .env
 └── package.json
 ```
-
-
